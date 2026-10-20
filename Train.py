@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split # o sklearn está servindo apenas para dividir os dados
 
-CSV_PATH = "archive/ai_jobs_salaries_clean.csv"
+CSV_PATH = "ai_jobs_salaries_clean.csv"
 
 # coluna usada para criar o alvo binário, nulo usa deteccao automática
 TARGET_COLUMN = "salary_in_usd"
@@ -21,28 +21,32 @@ DROP_COLUMNS = [
     "isco_group_hint",         # derivada do cargo, com valores vazios
 ]
  # colunas para n usar
-MAX_CATEGORIES = 300 # colunas com mais que esse valor são descartadas
+MAX_CATEGORIES = 500 # colunas com mais que esse valor são descartadas
 
 TEST_SIZE = 0.20 # 20% para teste e 80% para treino
 SEED = 42
-NUM_HIDDEN_LAYERS = 3 # num de camadas intermediarias
+NUM_HIDDEN_LAYERS = 2 #num de camadas intermediarias
+NEURONS_PER_LAYER = 4
 LEARNING_RATE = 0.1
-EPOCHS = 500 # não sei se é uma boa quantidade, talvez seja muito
+EPOCHS = 100 # não sei se é uma boa quantidade, talvez seja muito
 LOSS = "bce"# "bce" (Log Loss) ou "mse" (Erro Quadrático Médio)
-BATCH_SIZE = None
-NEURONS_PER_LAYER = 8 # número de neurônios por camada oculta
+BATCH_SIZE = 256
 
 # grade de experimentos para o artigo
 RUN_GRID = True
 GRID = [
+    (0, 1, 0.1), # para tirar a camada oculta e fazer regressão logistica
     (1, 4, 0.01),
     (1, 4, 0.1),
     (1, 8, 0.1),
+    (1, 16, 0.1),
     (2, 8, 0.1),
     (2, 16, 0.1),
+    (2, 16, 0.5),
     (3, 16, 0.1),
     (3, 16, 0.5),
 ]
+
 #repete com semestes diferentes
 GRID_REPETITIONS = 3
 
@@ -63,54 +67,6 @@ def find_target_column(df):
         if "salary" in col.lower() or "salario" in col.lower() or "salário" in col.lower():
             return col
     raise ValueError(f"Defina TARGET_COLUMN. Colunas: {list(df.columns)}")  # caso a coluna não seja encontrada automaticamente
-
-def evaluate(model, X, y):
-    """Retorna (acertos, total, acurácia em %)."""
-    hits = int((model.predict(X) == y).sum())
-    total = len(y)
-    return hits, total, 100.0 * hits / total
- 
- 
-def run_experiment(data, n_hidden_layers, n_neurons, learning_rate, epochs=EPOCHS,
-                   loss=LOSS, batch_size=BATCH_SIZE, seed=SEED, verbose=True):
-    X_train, X_test, y_train, y_test = data
-    model = MLP(X_train.shape[1], n_hidden_layers, n_neurons, learning_rate, loss, seed)
-    if verbose:
-        print(f"Arquitetura: {model.sizes} | taxa={learning_rate} | épocas={epochs} | loss={loss}")
-    model.fit(X_train, y_train, epochs, batch_size, seed, verbose)
- 
-    tr_hits, tr_total, tr_acc = evaluate(model, X_train, y_train)
-    te_hits, te_total, te_acc = evaluate(model, X_test, y_test)
-    if verbose:
-        print(f"\nTreino -> Acertos: {tr_hits} de {tr_total} ({tr_acc:.2f}%)")
-        print(f"TESTE  -> Acertos: {te_hits} de {te_total} ({te_acc:.2f}%)\n")
-    return {"train_acc": tr_acc, "test_acc": te_acc, "test_hits": te_hits, "test_total": te_total}
- 
- 
-def run_grid(data):
-    """Executa a grade de experimentos e imprime/salva a tabela para o relatório."""
-    rows = []
-    for (layers, neurons, lr) in GRID:
-        results = [
-            run_experiment(data, layers, neurons, lr, seed=SEED + r, verbose=False)
-            for r in range(GRID_REPETITIONS)
-        ]
-        rows.append({
-            "Camadas ocultas": layers,
-            "Neurônios/camada": neurons,
-            "Taxa de aprendizado": lr,
-            "Épocas": EPOCHS,
-            "Acurácia treino (%)": round(np.mean([r["train_acc"] for r in results]), 2),
-            "Acurácia teste (%)": round(np.mean([r["test_acc"] for r in results]), 2),
-            "Desvio teste (%)": round(np.std([r["test_acc"] for r in results]), 2),
-            "Acertos (última rep.)": f'{results[-1]["test_hits"]} de {results[-1]["test_total"]}',
-        })
-        print(f"OK: {layers} camada(s), {neurons} neurônios, lr={lr} -> "
-              f"teste {rows[-1]['Acurácia teste (%)']}%")
-    table = pd.DataFrame(rows)
-    print("\n" + table.to_string(index=False))
-    print("\nTabela salva em 'Resultados/resultados_experimentos.csv'")
-    table.to_csv("Resultados/resultados_experimentos.csv", index=False)
  
 # carrega o csv, cria o alvo binário, divice e normaliza
 def load_and_preprocess():
@@ -260,6 +216,53 @@ class MLP:
                 print(f"  Época {epoch:5d}/{epochs} | erro ({self.loss_name}): {loss:.6f}")
         return history
 
+
+#retorna os acertos totais
+def evaluate(model, X, y):
+    hits = int((model.predict(X) == y).sum())
+    total = len(y)
+    return hits, total, 100.0 * hits / total
+ 
+# roda a mlp
+def run_experiment(data, n_hidden_layers, n_neurons, learning_rate, epochs=EPOCHS, loss=LOSS, batch_size=BATCH_SIZE, seed=SEED, verbose=True):
+    X_train, X_test, y_train, y_test = data
+    model = MLP(X_train.shape[1], n_hidden_layers, n_neurons, learning_rate, loss, seed)
+    if verbose:
+        print(f"Arquitetura: {model.sizes} | taxa={learning_rate} | épocas={epochs} | loss={loss}")
+    model.fit(X_train, y_train, epochs, batch_size, seed, verbose)
+ 
+    tr_hits, tr_total, tr_acc = evaluate(model, X_train, y_train)
+    te_hits, te_total, te_acc = evaluate(model, X_test, y_test)
+    if verbose:
+        print(f"\nTreino -> Acertos: {tr_hits} de {tr_total} ({tr_acc:.2f}%)")
+        print(f"TESTE  -> Acertos: {te_hits} de {te_total} ({te_acc:.2f}%)\n")
+    return {"train_acc": tr_acc, "test_acc": te_acc, "test_hits": te_hits, "test_total": te_total}
+ 
+def run_grid(data):
+    #imprime em forma de tabela para facilitar para o relatório
+    rows = []
+    for (layers, neurons, lr) in GRID:
+        results = [
+            run_experiment(data, layers, neurons, lr, seed=SEED + r, verbose=False)
+            for r in range(GRID_REPETITIONS)
+        ]
+        rows.append({
+            "Camadas ocultas": layers,
+            "Neurônios/camada": neurons,
+            "Taxa de aprendizado": lr,
+            "Épocas": EPOCHS,
+            "Acurácia treino (%)": round(np.mean([r["train_acc"] for r in results]), 2),
+            "Acurácia teste (%)": round(np.mean([r["test_acc"] for r in results]), 2),
+            "Desvio teste (%)": round(np.std([r["test_acc"] for r in results]), 2),
+            "Acertos (última rep.)": f'{results[-1]["test_hits"]} de {results[-1]["test_total"]}',
+        })
+        print(f"OK: {layers} camada(s), {neurons} neurônios, lr={lr} -> "
+              f"teste {rows[-1]['Acurácia teste (%)']}%")
+    table = pd.DataFrame(rows)
+    print("\n" + table.to_string(index=False))
+    table.to_csv("resultados_experimentos.csv", index=False)
+    print("\nTabela salva em 'resultados_experimentos.csv'")
+
 def main():
     data = load_and_preprocess()
  
@@ -272,4 +275,3 @@ def main():
  
 if __name__ == "__main__":
     main()
-
